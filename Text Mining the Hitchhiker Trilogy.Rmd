@@ -1,0 +1,33 @@
+---
+title: "Text Mining the Hitchhiker Trilogy"
+author: "Greg Johnson"
+output: pdf_document
+---
+
+```{r installLibraries, include = FALSE}
+require("tidytext")
+```
+
+Let's read in Doug's first textbook.
+
+```{r readData}
+#setwd("~/Documents/Analytics/R/DouglasAdams")
+book1 <- readLines("data/HitchHiker.txt")
+head(book1,20)
+```
+
+Our data are in! But they're not tidyin the sense that we want one token per line. For a first look at our data, we will look at words.
+
+```{r}
+3
+```
+
+
+
+
+
+
+
+
+
+
