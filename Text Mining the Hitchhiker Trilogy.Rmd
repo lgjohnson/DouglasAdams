@@ -1,30 +1,72 @@
 ---
 title: "Text Mining the Hitchhiker Trilogy"
 author: "Greg Johnson"
-output: pdf_document
+output: 
+  pdf_document:
+    toc: TRUE
 ---
 
-```{r installLibraries, include = FALSE}
-require("tidytext")
+```{r global_options, include = FALSE}
+knitr::opts_chunk$set(
+  fig.width = 7, fig.height = 3.5, 
+  fig.path = 'Figs/',
+  fig.align='center',
+  warning = FALSE, message = FALSE,
+  tidy = TRUE)
 ```
 
-Let's read in Doug's first textbook.
+
+```{r installLibraries, include = FALSE}
+require("tidytext") #text processing
+require("magrittr") #piping
+require("tidyverse") #data science ecosystem
+require("stringr") #string processing
+require("knitr") #kable tables
+require("wordcloud") #word clouds
+require("RColorBrewer") #color palettes
+```
+
+#Reading and Tidying Our Data
+
+Let's read in Doug's first book in his "trilogy," The Hitchhiker's Guide to the Galaxy. We will read in the text file as a character vector in which each element is a line from the book.
 
 ```{r readData}
 #setwd("~/Documents/Analytics/R/DouglasAdams")
 book1 <- readLines("data/HitchHiker.txt")
-head(book1,20)
+book1 %<>% tibble(line = 1:length(.), text = .)
+c(" ",head(book1$text,20)," ") %>% kable
 ```
 
-Our data are in! But they're not tidyin the sense that we want one token per line. For a first look at our data, we will look at words.
+Our data are in! But they're not tidy in the sense that we want one token per line. For a first look at our data, we will look at words. The *unnest_tokens* function will tidy our data (by default) into word tokens. It will also strip punctuation and convert our words to lowercase.
 
-```{r}
-3
+```{r tokenize}
+book1 %<>% mutate(linenumber = row_number(),
+                      chapter = cumsum(str_detect(text,regex("Chapter \\d+$",ignore_case = TRUE))))
+
+book1words <- book1 %>% unnest_tokens(word,text)
+
 ```
 
+We will remove stop words from our new tidy dataset with the *anti_join* function.
 
+```{r removeStop}
+book1words %<>% anti_join(stop_words)
+```
 
+#Word Frequency
 
+Now we can start processing our tidy data - let's start with a simple word frequency count using *dplyr* and a visualization of frequencies using a word cloud.
+
+```{r countWords, results = "hold"}
+book1count <- book1words %>% count(word,sort=TRUE)
+book1count %>% filter( n > 50) %>% mutate(word = reorder(word,n))%>% ggplot(aes(word,n)) + geom_col() + xlab(NULL)+ coord_flip()
+wordcloud(
+  words = book1count$word, freq = book1count$n, 
+  max.words = 200, 
+  random.order = FALSE, rot.per = .35, 
+  colors = brewer.pal(8,"Dark2")
+)
+```
 
 
 
