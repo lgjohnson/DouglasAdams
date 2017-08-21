@@ -9,7 +9,7 @@ output:
 ```{r global_options, include = FALSE}
 knitr::opts_chunk$set(
   fig.width = 7, fig.height = 3.5,
-  tidy.opts=list(width.cutoff=70),
+  tidy.opts=list(width.cutoff=60),
   fig.path = 'Figs/',
   fig.align='center',
   warning = FALSE, message = FALSE,
@@ -62,11 +62,11 @@ We will remove stop words from our new tidy dataset with the *anti_join* functio
 Dougwords %<>% anti_join(stop_words, by = "word")
 ```
 
-#Word Frequency
+#Term Frequency
 
 ##A Simple Word Count
 
-Now we can start processing our tidy data. For now let's look at the first book, **Hitchiker's Guide to the Galaxy**. We'll start with a simple word frequency count using *dplyr* and a visualization of frequencies using a word cloud.
+Now we can start processing our tidy data. For now let's look at the first book, **Hitchiker's Guide to the Galaxy**. We'll start with a simple word frequency count aka **term frequency** using *dplyr* and a visualization of frequencies using a word cloud.
 
 ```{r countWords, results = "hold"}
 Book1count <- Dougwords %>% filter(book == "The Hitchhiker's Guide to the Galaxy") %>% count(word,sort=TRUE)
@@ -171,6 +171,30 @@ wordcloud(
 )
 ```
 
+How about if we look at positive vs. negative sentiments. We can create a word cloud that has a "sentiment axis" where words are placed according to frequency *and* their sentiment valence.
+
+```{r ComparisonClouds, fig.height = 5, results = "hold"}
+Dougwords %>% 
+  inner_join(sentiments %>% filter(lexicon == "bing")) %>%
+  count(word, sentiment, sort = TRUE) %>%
+  ungroup() %>%
+  group_by(sentiment) %>%
+  top_n(10) %>%
+  ungroup() %>%
+  mutate(word = reorder(word,n)) %>%
+  ggplot(aes(word,n,fill = sentiment)) +
+  geom_col(show.legend = FALSE) + 
+  facet_wrap(~sentiment, scales = "free_y") +
+  labs(y = "Contribution to sentiment",
+       x = NULL) +
+  coord_flip()
+Dougwords %>%
+  inner_join(sentiments %>% filter(lexicon == "bing")) %>%
+  count(word, sentiment, sort = TRUE) %>%
+  acast(word ~ sentiment, value.var = "n", fill = 0) %>%
+  comparison.cloud(colors = c("#F8766D", "#00BFC4"),
+                   max.words = 100)
+```
 
 ##Sentiment over Time
 
@@ -219,7 +243,7 @@ bind_rows(afinn, bingNRC) %>%
 
 It looks like it was the bing lexicon that (arguably) introduced a downward bias in sentiment! The reason is actually simple, bing has far more negative words than the other lexicons:
 
-```{r}
+```{r comparisonCloud}
 nrcvalence <- sentiments %>% 
   filter(lexicon == "nrc", sentiment %in% c("positive", "negative")) %>% 
   count(sentiment)
@@ -238,7 +262,7 @@ kable(to_print)
 
 Let's redo our trilogy sentiment analysis with the nrc lexicon.
 
-```{r fig.height = 9}
+```{r SentimentNRC, fig.height = 9}
 Dougsentiment2 <- Dougwords %>% 
   inner_join(sentiments %>% filter(lexicon == "nrc", sentiment %in% c("positive","negative")), by = "word") %>%
   count(book, index = bookline %/% 80, sentiment) %>%
@@ -251,6 +275,108 @@ ggplot(Dougsentiment2, aes(index, sentiment, fill = book)) +
 
 ```
 The books look a lot more positive now that we've used a different lexicon! But their relative positivity looks about the same. **Mostly Harmless** and **Restaurant** are still the most positive and **So Long** is still one of the least positive. Oh well - looks like cherry-picking lexicons won't save my theory that **So Long** has the most positive sentiment. But this does highlight an important point about lexicons - the absolute scale of positive and negative sentiment may change between lexicons but the relative rankings between texts stays the same (for the most part).
+
+
+#Sentence Analysis with CoreNLP
+
+Using single words (aka unigrams) in text analysis is a powerful but simplistic approach. As mentioned earlier, one drawback is the misclassification of negation words in sentiment analysis. What else can we do? We can use n-grams of $n>1$ or we can use the natural unit of the sentence. Unfortunately (but justifiably) this introduces some incredible complexity into our analysis. **CoreNLP** is an open source Natural Language Processing software from Stanford. It contains remarkably sophisticated tools for processing the syntactic structure of sentences e.g. subject-object dependencies, entity recognition, etc. Perhaps Adams' prose will be a good challenge. Why? Check out this sentence:
+
+> "Not unnaturally, many elevators imbued with intelligence and precognition became terribly frustrated with the mindless business of going up and down, up and down, experimented briefly with the notion of going sideways, as a sort of existential protest, demanded participation in the decision-making process and finally took to squatting in basements sulking."
+
+That's a hell of a sentence to process. But regardless, let's take a look at some of CoreNLP's tools for processing sentences.
+
+#Revisiting Word Frequency
+
+
+##Zipf's Law
+
+Distributions of term frequencies consistently take a certain shape - extremely long right tails.
+
+```{r TermFreqDist, fig.height = 5}
+#get counts for each word for each book
+book_words <- Dougwords %>% 
+  count(book, word, sort = TRUE) %>% 
+  ungroup()
+#total number of words per book
+total_words <- book_words %>% 
+  group_by(book) %>% 
+  summarize(total = sum(n))
+#append to tf per book dataset the total number of words per book
+book_words <- left_join(book_words, total_words)
+
+#plot distribution of term frequencies
+ggplot(book_words, aes(n/total, fill = book))+
+  geom_histogram(show.legend = FALSE) +
+  xlim(NA, .0009) + 
+  facet_wrap(~book, ncol = 2, scales = "free_y")
+```
+
+How did we form these distributions? First words are ranked according to term frequency, then their term frequencies are plotted. We can see that as rank decreases, so does term frequency *but the decrease doesn't look linear.* It looks like an exponential decrease. 
+
+Zipf's law attemps to catch this term frequency phenomenon It states that a word's term frequency is inversely proportional to its rank. In other words, the logarithms of term frequency and of rank should have a negative linear relationship. As I mentioned above, this may be an oversimplication.
+
+```{r Zipf}
+freq_by_rank <- book_words %>%
+  group_by(book) %>%
+  mutate(rank = row_number(), `term frequency` = n/total)
+  
+p<- freq_by_rank %>%  
+  ggplot(aes(rank, `term frequency`, color = book)) +
+  geom_line(size = 1.2, alpha = .8) +
+  scale_x_log10() +
+  scale_y_log10()
+p
+```
+
+Looks pretty linear! We can fit an OLS line to see just how well Zipf's Law applies.
+
+```{r ZipfFit}
+OLSfit <- lm(log10(`term frequency`) ~ log10(rank), data = freq_by_rank) %>% coef
+p + geom_abline(intercept = OLSfit[1], slope = OLSfit[2], color = "gray50", linetype = 2)
+```
+
+Ill fitting at the higher ranks but the rest of the ranks seem to fit Zipf's pretty well. This phenomenon is pretty common.
+
+##*tf-idf* Statistic
+As we saw earlier, one method of analyzing a text's content is to look at raw word frequency. However we may want to adjust word frequency by weighting words based on how much they're used in a collection of texts. For example, we may want to weight *less* those words that are common between several texts and weight *more* those that are unique to a text. One statistic that applies this logic is *tf-idf* which stands for the term frequency - inverse document frequency. For some word $w$,
+
+$$tf-idf(w) = tf(w) \times idf(w) = n_w \times \ln \Big(\frac{n_{\mathrm{docs}}}{n_{\mathrm{docs\; with\; term}}}\Big)$$
+The idea is that for words that occur in many documents (of consideration), $\frac{n_{\mathrm{docs}}}{n_{\mathrm{docs\; with\; term}}}$ is close to 1 and its logarithm is close to 0, thus the raw term frequency is weighted towards zero. When the word occurs in few documents, $\frac{n_{\mathrm{docs}}}{n_{\mathrm{docs\; with\; term}}}$ is much greater than zero and so is its logarithm, giving a larger weight to the term frequency.
+
+Using the *tf-idf* statistics, let's investigate which words are characteristic of which documents.
+
+```{r tfidf, results = "hold", fig.height = 5}
+book_words %<>% bind_tf_idf(word, book, n) 
+to_kable <- book_words %>% select(-total) %>% arrange(desc(tf_idf)) %>% top_n(10, tf_idf)
+to_kable %<>% mutate(tf = round(tf,4), idf = round(idf,3), tf_idf = round(tf_idf,4))
+to_kable %>% kable()
+plot_doug <- book_words %>%
+  arrange(desc(tf_idf)) %>%
+  mutate(word = factor(word, levels = word %>% unique %>% rev))
+plot_doug %>% 
+  top_n(20) %>%
+  ggplot(aes(word, tf_idf, fill = book)) +
+  geom_col() +
+  labs(x = NULL, y = "tf-idf") +
+  coord_flip()
+```
+
+It looks like the terms with highest *tf-idf* are mostly names of characters unique to one book. The highest ranked term? Poor, poor Fenchurch. Second? Our buddy Slartibartfast who features largely in **The Hitchhiker's Guide** and has a small cameo in **Life**. Let's reorganize this chart so that we can see the high *tf-idf* terms grouped by book.
+
+```{r tfidfGrouped, fig.height = 6}
+plot_doug %>%
+  group_by(book) %>%
+  top_n(7) %>%
+  ungroup() %>%
+  ggplot(aes(word, tf_idf, fill = book)) +
+  geom_col(show.legend = FALSE) +
+  labs(x = NULL, y = "tf-idf") +
+  facet_wrap(~book, ncol = 2, scales = "free") +
+  coord_flip()
+
+```
+
+
 
 
 
