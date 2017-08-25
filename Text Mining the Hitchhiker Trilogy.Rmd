@@ -9,6 +9,7 @@ output:
 ```{r global_options, include = FALSE}
 knitr::opts_chunk$set(
   fig.width = 7, fig.height = 3.5,
+  dpi = 400,
   tidy.opts=list(width.cutoff=60),
   fig.path = 'Figs/',
   fig.align='center',
@@ -27,6 +28,8 @@ require(wordcloud) #word clouds
 require(RColorBrewer) #color palettes
 require(scales)
 require(reshape2)
+require(igraph)
+require(ggraph)
 ```
 
 #Reading and Tidying Our Data
@@ -370,7 +373,103 @@ plot_doug %>%
 
 ```
 
+#Between-Word Relationships
 
+##Bigram Tokenization
+
+Text analysis of single words is a simple and easy yet powerful approach. But we have to admit that the real meat-and-potatoes is in higher units of analysis. The next natural self-contained unit that comes to mind is the sentence but what about groups of words within sentences? We can tokenize n-grams, n-size groups of consecutive words.
+
+```{r createBigrams}
+Dougbigrams <- Doug %>% unnest_tokens(bigram, text, token = "ngrams", n=2)
+```
+
+##Bigram Frequency
+
+Following our single word (unigram) approach, we can again look at term frequency:
+
+```{r BigramFreq}
+DougbigramFiltered<- Dougbigrams %>% 
+  separate(bigram, c("word1", "word2"), sep = " ") %>% 
+  filter(!word1 %in% stop_words$word) %>%
+  filter(!word2 %in% stop_words$word)
+
+
+DougbigramCount <- DougbigramFiltered %>%
+    unite(bigram, word1, word2, sep = " ") %>%
+  count(bigram, sort = TRUE)
+
+wordcloud(
+  words = DougbigramCount$bigram, freq = DougbigramCount$n, 
+  max.words = 50, 
+  random.order = FALSE, rot.per = .35, 
+  colors = brewer.pal(8,"Dark2")
+)
+```
+
+
+What if we were interested in Arthur's actions throughout the book? We could take a look at all the bigrams in which Arthur is the first word (and Dent isn't the second word).
+
+```{r ArthurActions}
+DougbigramFiltered %>%
+  filter(word1 == "arthur" & !word2 %in% c("dent","dent's")) %>%
+  unite(bigram, word1, word2, sep = " ") %>%
+  count(bigram, sort = TRUE) %>%
+  filter( n >= 5) %>% 
+  mutate(bigram = reorder(bigram,n)) %>% 
+  ggplot(aes(bigram,n)) + geom_col() + xlab(NULL)+ coord_flip()
+```
+
+Arthur's certainly doing a lot of looking and staring! In fact a lot of the verbs following Arthur are passive, which jives quite well with my milquetoast impression of the character! What if we looked at words that preceded Arthur? Those tend to be verbs about speaking and perhaps this can also give us some insight into Arthur's character.
+
+```{r ArthurWords}
+DougbigramFiltered %>%
+  filter(word2 == "arthur") %>%
+  unite(bigram, word1, word2, sep = " ") %>%
+  count(bigram, sort = TRUE) %>%
+  filter( n >= 5) %>% 
+  mutate(bigram = reorder(bigram,n)) %>% 
+  ggplot(aes(bigram,n)) + geom_col() + xlab(NULL)+ coord_flip()
+```
+
+Here we get a slightly different picture of Arthur - he's saying things quite aggressively like shouting and insisting.
+
+Just like with unigrams, we can adjust our bigram frequencies for overall frequency of bigrams in the trilogy. This yields the following:
+
+```{r}
+DougbigramFiltered %>% 
+  unite(bigram, word1, word2, sep = " ") %>%
+  count(book, bigram) %>%
+  bind_tf_idf(bigram, book, n) %>%
+  arrange(desc(tf_idf)) %>%
+  filter(tf_idf >= .003) %>% 
+  mutate(bigram = reorder(bigram,tf_idf)) %>% 
+  ggplot(aes(bigram,tf_idf,fill = book)) + geom_col() + xlab(NULL)+ coord_flip()
+```
+
+Wow! Mostly Harmless really stands out with the bigrams. First is this "sandwich maker" bigram. What do we make of this? Well this bigram comes almost exclusively from Chapter 13 when it is used to describe Arthur's new persona on the utopian planet Lamuella, which is filled with "normal beasts" and "pikka birds" both of which are also bigrams with high tf-idf. Lamuella is unique to Mostly Harmless and is why these bigrams dominate according to our tf-idf statistic.
+
+##Accounting for Negations with Bigrams
+
+##Bigram Network Graphs
+
+Networks are a natural representation for bigrams. Individual words are the nodes and the links are determined by the frequency with which two words appear in a bigram together.
+
+```{r}
+bigram_graph <- DougbigramCount %>% 
+  separate(bigram, c("word1", "word2"), sep = " ") %>%
+  filter(n>10) %>%
+  graph_from_data_frame()
+
+a <- grid::arrow(type = "closed", length = unit(.15, "inches"))
+
+bigram_graph %>% 
+  ggraph(layout = "fr") +
+  geom_edge_link(aes(edge_alpha = n), show.legend = FALSE, arrow = a, end_cap = circle(.07, 'inches')) +
+  geom_node_point(color = "lightblue", size = 5) +
+  geom_node_text(aes(label = name), vjust = 1, hjust = 1) +
+  theme_void()
+
+```
 
 #Sentence Analysis with CoreNLP
 
