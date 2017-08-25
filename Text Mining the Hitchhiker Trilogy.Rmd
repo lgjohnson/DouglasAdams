@@ -9,7 +9,6 @@ output:
 ```{r global_options, include = FALSE}
 knitr::opts_chunk$set(
   fig.width = 7, fig.height = 3.5,
-  dpi = 400,
   tidy.opts=list(width.cutoff=60),
   fig.path = 'Figs/',
   fig.align='center',
